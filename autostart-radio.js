@@ -368,6 +368,18 @@
                 uk: 'Прямий потік mp3/aac, плейлист .pls/.m3u або HLS .m3u8 (якщо його підтримує пристрій)',
                 be: 'Прамы паток mp3/aac, плэйліст .pls/.m3u або HLS .m3u8 (калі яго падтрымлівае прылада)'
             },
+            autostart_custom_volume: {
+                ru: 'Громкость',
+                en: 'Volume',
+                uk: 'Гучність',
+                be: 'Гучнасць'
+            },
+            autostart_custom_volume_descr: {
+                ru: 'Громкость встроенного плеера, до неё же растёт плавное нарастание',
+                en: 'Volume of the built-in player, the fade-in also rises to it',
+                uk: 'Гучність вбудованого плеєра, до неї ж зростає плавне наростання',
+                be: 'Гучнасць убудаванага плэера, да яе ж расце плаўнае нарастанне'
+            },
             autostart_custom_fade: {
                 ru: 'Плавное нарастание громкости',
                 en: 'Volume fade-in',
@@ -1438,27 +1450,28 @@
         var playing = false;
         var fadeTimer = null;
         var fadePending = 0;  // ms of a fade-in that starts on "playing"
+        var volume = 1;       // volume from the settings, 0..1
         var api;
 
         function setState(state) {
             if (button) button.removeClass('stop loading play').addClass(state);
         }
 
-        /** Volume can be read-only on some devices: the stream then just plays without a fade. */
+        /** Volume can be read-only on some devices: the stream then plays at full volume without a fade. */
         function setVolume(value) {
             try {
                 audio.volume = Math.max(0, Math.min(1, value));
             } catch (e) { }
         }
 
-        /** Cancel a fade-in and restore the full volume, so a manual start is never silent. */
+        /** Cancel a fade-in and restore the volume from the settings, so a manual start is never silent. */
         function stopFade() {
             clearInterval(fadeTimer);
 
             fadeTimer = null;
             fadePending = 0;
 
-            if (audio) setVolume(1);
+            if (audio) setVolume(volume);
         }
 
         function runFade(ms) {
@@ -1469,8 +1482,9 @@
             fadeTimer = setInterval(function () {
                 var progress = Math.min(1, (Date.now() - started) / ms);
 
-                // quadratic curve: sounds smoother than a linear one
-                setVolume(progress * progress);
+                // quadratic curve: sounds smoother than a linear one; reads volume on every step,
+                // so a change in the settings during the fade is picked up
+                setVolume(volume * progress * progress);
 
                 if (progress >= 1) {
                     clearInterval(fadeTimer);
@@ -1552,10 +1566,17 @@
                 else if (url) play(url);
             });
 
-            // the name can be changed in the settings while the icon is shown
+            // the name and the volume can be changed in the settings while the icon is shown
             try {
                 Lampa.Storage.listener.follow('change', function (e) {
                     if (e.name === 'autostart_custom_name') button.find('.autostart-radio__name').text(customName());
+
+                    if (e.name === 'autostart_custom_volume') {
+                        volume = customVolume();
+
+                        // a running fade reaches the new volume by itself
+                        if (audio && !fadeTimer && !fadePending) setVolume(volume);
+                    }
                 });
             } catch (e) { }
 
@@ -1576,7 +1597,7 @@
 
         /**
          * @param {string} value stream url
-         * @param {number} [fade] fade-in duration in ms, 0 or none: full volume at once
+         * @param {number} [fade] fade-in duration in ms, 0 or none: the volume from the settings at once
          */
         function play(value, fade) {
             show(value);
@@ -1592,6 +1613,8 @@
 
             var a = ensureAudio();
             var promise;
+
+            volume = customVolume();
 
             stopFade();
 
@@ -1653,6 +1676,13 @@
         return String(Lampa.Storage.field('autostart_custom_url') || CUSTOM_DEFAULT_URL).trim();
     }
 
+    /** Player volume from the settings, 0.1..1. */
+    function customVolume() {
+        var percent = parseInt(Lampa.Storage.field('autostart_custom_volume'), 10) || 50;
+
+        return Math.max(10, Math.min(100, percent)) / 100;
+    }
+
     /** Fade-in on autostart and after a video, in ms. */
     function customFade() {
         return (parseInt(Lampa.Storage.field('autostart_custom_fade'), 10) || 0) * 1000;
@@ -1710,6 +1740,23 @@
                     field: {
                         name: t('autostart_radio_mode'),
                         description: radioText('autostart_radio_mode_descr', t('autostart_custom_title'))
+                    }
+                });
+
+                var volumeValues = {};
+
+                for (var v = 10; v <= 100; v += 10) volumeValues[v] = v + '%';
+
+                addParam({
+                    param: {
+                        name: 'autostart_custom_volume',
+                        type: 'select',
+                        values: volumeValues,
+                        default: '50'
+                    },
+                    field: {
+                        name: t('autostart_custom_volume'),
+                        description: t('autostart_custom_volume_descr')
                     }
                 });
 
