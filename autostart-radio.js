@@ -26,7 +26,7 @@
 (function () {
     'use strict';
 
-    var VERSION = '1.7.0';
+    var VERSION = '1.7.1';
     var COMPONENT = 'autostart_radio';
     var AUTHOR = '@etix';
     var FILE_PATTERN = /\/autostart-radio\.js(\?|#|$)/i;
@@ -54,7 +54,7 @@
         '</svg>';
 
     var providers = [];
-    var targetValues = { none: '#{autostart_target_none}' };
+    var targetValues = {};
     var appReady = false;
     var settingsBuilt = false;
     var lastSettingsOpen = '';
@@ -175,12 +175,6 @@
                 en: 'What to launch',
                 uk: 'Що запускати',
                 be: 'Што запускаць'
-            },
-            autostart_target_none: {
-                ru: 'Ничего',
-                en: 'Nothing',
-                uk: 'Нічого',
-                be: 'Нічога'
             },
             autostart_delay: {
                 ru: 'Задержка запуска',
@@ -510,6 +504,13 @@
         var delays = [0, 3, 5, 10, 15, 30];
         var delayValues = {};
 
+        // 1.7.0 and earlier had "Nothing" in "What to launch": keep nothing launching, the switch does it now
+        if (Lampa.Storage.get('autostart_target', '') === 'none') {
+            Lampa.Storage.set('autostart_target', 'custom', true);
+            Lampa.Storage.set('autostart_enabled', false, true);
+            log('target "none" replaced by "custom", autostart turned off');
+        }
+
         for (var i = 0; i < delays.length; i++) {
             delayValues[delays[i]] = delays[i] ? delays[i] + ' ' + t('autostart_delay_sec') : t('autostart_delay_none');
         }
@@ -539,7 +540,7 @@
                 name: 'autostart_target',
                 type: 'select',
                 values: targetValues,
-                default: 'none'
+                default: 'custom'
             },
             field: {
                 name: t('autostart_target')
