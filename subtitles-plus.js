@@ -20,7 +20,7 @@
 (function () {
     'use strict';
 
-    var VERSION = '2.0.0';
+    var VERSION = '0.0.0';
     var AUTHOR = '@etix';
     var FILE_PATTERN = /\/subtitles-plus\.js(\?|#|$)/i;
     var STYLE_ID = 'subs-plus-style';
