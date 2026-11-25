@@ -26,7 +26,7 @@
 (function () {
     'use strict';
 
-    var VERSION = '1.6.0';
+    var VERSION = '1.7.0';
     var COMPONENT = 'autostart_radio';
     var AUTHOR = '@etix';
     var FILE_PATTERN = /\/autostart-radio\.js(\?|#|$)/i;
@@ -373,6 +373,24 @@
                 en: 'Direct mp3/aac stream, .pls/.m3u playlist or HLS .m3u8 (if the device supports it)',
                 uk: 'Прямий потік mp3/aac, плейлист .pls/.m3u або HLS .m3u8 (якщо його підтримує пристрій)',
                 be: 'Прамы паток mp3/aac, плэйліст .pls/.m3u або HLS .m3u8 (калі яго падтрымлівае прылада)'
+            },
+            autostart_custom_fade: {
+                ru: 'Плавное нарастание громкости',
+                en: 'Volume fade-in',
+                uk: 'Плавне наростання гучності',
+                be: 'Плаўнае нарастанне гучнасці'
+            },
+            autostart_custom_fade_descr: {
+                ru: 'При автозапуске и после просмотра видео',
+                en: 'On autostart and after watching a video',
+                uk: 'Під час автозапуску та після перегляду відео',
+                be: 'Пры аўтазапуску і пасля прагляду відэа'
+            },
+            autostart_custom_fade_none: {
+                ru: 'Выкл',
+                en: 'Off',
+                uk: 'Вимк',
+                be: 'Выкл'
             },
             autostart_custom_error_url: {
                 ru: 'укажите адрес потока (http:// или https://) в Настройки → Автозапуск радио',
@@ -1411,14 +1429,53 @@
             '@keyframes autostart-radio-pulse{0%,100%{box-shadow:0 0 0 0 rgba(255,255,255,0.5)}' +
             '50%{box-shadow:0 0 0 0.35em rgba(255,255,255,0)}}';
 
+        var FADE_STEP = 100;
+
         var audio = null;
         var button = null;
         var url = '';
         var playing = false;
+        var fadeTimer = null;
+        var fadePending = 0;  // ms of a fade-in that starts on "playing"
         var api;
 
         function setState(state) {
             if (button) button.removeClass('stop loading play').addClass(state);
+        }
+
+        /** Volume can be read-only on some devices: the stream then just plays without a fade. */
+        function setVolume(value) {
+            try {
+                audio.volume = Math.max(0, Math.min(1, value));
+            } catch (e) { }
+        }
+
+        /** Cancel a fade-in and restore the full volume, so a manual start is never silent. */
+        function stopFade() {
+            clearInterval(fadeTimer);
+
+            fadeTimer = null;
+            fadePending = 0;
+
+            if (audio) setVolume(1);
+        }
+
+        function runFade(ms) {
+            var started = Date.now();
+
+            log('custom stream: fade', ms, 'ms');
+
+            fadeTimer = setInterval(function () {
+                var progress = Math.min(1, (Date.now() - started) / ms);
+
+                // quadratic curve: sounds smoother than a linear one
+                setVolume(progress * progress);
+
+                if (progress >= 1) {
+                    clearInterval(fadeTimer);
+                    fadeTimer = null;
+                }
+            }, FADE_STEP);
         }
 
         /** Stop the audio and close the stream connection, the icon stays. */
@@ -1437,6 +1494,7 @@
                 } catch (e) { }
             }
 
+            stopFade();
             setState('stop');
         }
 
@@ -1449,6 +1507,14 @@
             audio.addEventListener('playing', function () {
                 playing = true;
                 setState('play');
+
+                // the fade starts with the sound, buffering does not eat it
+                if (fadePending) {
+                    var ms = fadePending;
+
+                    fadePending = 0;
+                    runFade(ms);
+                }
             });
 
             audio.addEventListener('waiting', function () {
@@ -1507,7 +1573,11 @@
             button.find('.autostart-radio__name').text(customName());
         }
 
-        function play(value) {
+        /**
+         * @param {string} value stream url
+         * @param {number} [fade] fade-in duration in ms, 0 or none: full volume at once
+         */
+        function play(value, fade) {
             show(value);
 
             // SomaFM and Radio Record stop the previous player through window.currentPlayer
@@ -1521,6 +1591,13 @@
 
             var a = ensureAudio();
             var promise;
+
+            stopFade();
+
+            if (fade > 0) {
+                fadePending = fade;
+                setVolume(0);
+            }
 
             playing = false;
             setState('loading');
@@ -1573,6 +1650,11 @@
 
     function customUrl() {
         return String(Lampa.Storage.field('autostart_custom_url') || CUSTOM_DEFAULT_URL).trim();
+    }
+
+    /** Fade-in on autostart and after a video, in ms. */
+    function customFade() {
+        return (parseInt(Lampa.Storage.field('autostart_custom_fade'), 10) || 0) * 1000;
     }
 
     /** Built in startPlugin, after the translations are added. */
@@ -1629,6 +1711,26 @@
                         description: radioText('autostart_radio_mode_descr', t('autostart_custom_title'))
                     }
                 });
+
+                var fades = [0, 2, 5, 10];
+                var fadeValues = {};
+
+                for (var i = 0; i < fades.length; i++) {
+                    fadeValues[fades[i]] = fades[i] ? fades[i] + ' ' + t('autostart_delay_sec') : t('autostart_custom_fade_none');
+                }
+
+                addParam({
+                    param: {
+                        name: 'autostart_custom_fade',
+                        type: 'select',
+                        values: fadeValues,
+                        default: '5'
+                    },
+                    field: {
+                        name: t('autostart_custom_fade'),
+                        description: t('autostart_custom_fade_descr')
+                    }
+                });
             },
 
             run: function (done, fail) {
@@ -1636,7 +1738,7 @@
 
                 function start(stream) {
                     if (Lampa.Storage.field('autostart_custom_mode') === 'pause') CustomPlayer.arm(stream);
-                    else CustomPlayer.play(stream);
+                    else CustomPlayer.play(stream, customFade());
 
                     done();
                 }
@@ -1674,7 +1776,7 @@
 
             // stream errors are reported by the player itself
             resume: function (done) {
-                CustomPlayer.play(CustomPlayer.url());
+                CustomPlayer.play(CustomPlayer.url(), customFade());
                 done();
             }
         };
