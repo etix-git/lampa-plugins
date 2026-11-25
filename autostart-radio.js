@@ -26,7 +26,7 @@
 (function () {
     'use strict';
 
-    var VERSION = '1.7.2';
+    var VERSION = '1.7.3';
     var COMPONENT = 'autostart_radio';
     var AUTHOR = '@etix';
     var FILE_PATTERN = /\/autostart-radio\.js(\?|#|$)/i;
@@ -1676,11 +1676,11 @@
         return String(Lampa.Storage.field('autostart_custom_url') || CUSTOM_DEFAULT_URL).trim();
     }
 
-    /** Player volume from the settings, 0.1..1. */
+    /** Player volume from the settings, 0.02..1. */
     function customVolume() {
         var percent = parseInt(Lampa.Storage.field('autostart_custom_volume'), 10) || 50;
 
-        return Math.max(10, Math.min(100, percent)) / 100;
+        return Math.max(2, Math.min(100, percent)) / 100;
     }
 
     /** Fade-in on autostart and after a video, in ms. */
@@ -1743,9 +1743,10 @@
                     }
                 });
 
+                var volumes = [2, 4, 6, 8, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100];
                 var volumeValues = {};
 
-                for (var v = 10; v <= 100; v += 10) volumeValues[v] = v + '%';
+                for (var v = 0; v < volumes.length; v++) volumeValues[volumes[v]] = volumes[v] + '%';
 
                 addParam({
                     param: {
