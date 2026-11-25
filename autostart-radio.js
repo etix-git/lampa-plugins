@@ -26,7 +26,7 @@
 (function () {
     'use strict';
 
-    var VERSION = '1.7.1';
+    var VERSION = '1.7.2';
     var COMPONENT = 'autostart_radio';
     var AUTHOR = '@etix';
     var FILE_PATTERN = /\/autostart-radio\.js(\?|#|$)/i;
@@ -1713,7 +1713,7 @@
                     }
                 });
 
-                var fades = [0, 2, 5, 10];
+                var fades = [0, 5, 10, 20, 30, 40, 50, 60];
                 var fadeValues = {};
 
                 for (var i = 0; i < fades.length; i++) {
@@ -1725,7 +1725,7 @@
                         name: 'autostart_custom_fade',
                         type: 'select',
                         values: fadeValues,
-                        default: '5'
+                        default: '10'
                     },
                     field: {
                         name: t('autostart_custom_fade'),
