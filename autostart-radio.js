@@ -12,13 +12,12 @@
  *           name: 'My plugin',
  *           settings: function(addParam){ addParam({ param: {...}, field: {...} }) },
  *           init: function(){},
- *           run: function(done, fail){ ...; done() },
+ *           // mode: 'play', or 'pause' for the "Paused" autostart (only the icon, if the target can)
+ *           run: function(done, fail, mode){ ...; done() },
  *           // optional, to come back after a video: see Resume
  *           active: function(){ return true }, suspend: function(){}, stop: function(){},
  *           resume: function(done, fail){ done() },
- *           // optional: true when it starts paused (no idle countdown then)
- *           paused: function(){ return false },
- *           // optional: show or hide the idle countdown on its own icon
+ *           // optional: show or hide the inactivity countdown on its own icon
  *           countdown: function(on){}
  *       })
  *   }
@@ -54,6 +53,8 @@
 
     // user activity that restarts the idle countdown
     var IDLE_EVENTS = ['keydown', 'mousedown', 'mousemove', 'touchstart', 'wheel'];
+    // default "Inactivity time", in seconds
+    var IDLE_DEFAULT = 300;
 
     var ICON = '<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">' +
         '<path d="M12 2.5v8" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>' +
@@ -119,9 +120,9 @@
         }
     }
 
-    /** Idle time from a settings select, in seconds. */
+    /** "Inactivity time" from the settings, in seconds. */
     function idleSeconds(name) {
-        return parseInt(Lampa.Storage.field(name), 10) || 0;
+        return parseInt(Lampa.Storage.field(name), 10) || IDLE_DEFAULT;
     }
 
     /**
@@ -279,16 +280,34 @@
                 be: 'Аўтазапуск пры старце'
             },
             autostart_enabled_descr: {
-                ru: 'Когда запускать выбранный объект после загрузки Lampa. Если задан простой (режим «Играть»), его отсчёт начинается сразу',
-                en: 'When to launch the selected object after Lampa has loaded. With an idle time (Play mode) its countdown starts at once',
-                uk: 'Коли запускати вибраний об\'єкт після завантаження Lampa. Якщо задано простій (режим «Грати»), його відлік починається одразу',
-                be: 'Калі запускаць выбраны аб\'ект пасля загрузкі Lampa. Калі зададзены прастой (рэжым «Іграць»), яго адлік пачынаецца адразу'
+                ru: 'Когда запускать выбранный объект после загрузки Lampa. «Пауза»: в шапке только иконка, радио запускается нажатием на неё. «При неактивности» ждёт время из настройки «Время неактивности»',
+                en: 'When to launch the selected object after Lampa has loaded. "Paused": only the icon in the header, the radio starts when you press it. "When inactive" waits for the "Inactivity time"',
+                uk: 'Коли запускати вибраний об\'єкт після завантаження Lampa. «Пауза»: у шапці лише іконка, радіо запускається натисканням на неї. «Під час неактивності» чекає час із налаштування «Час неактивності»',
+                be: 'Калі запускаць выбраны аб\'ект пасля загрузкі Lampa. «Паўза»: у шапцы толькі іконка, радыё запускаецца націсканнем на яе. «Пры неактыўнасці» чакае час з налады «Час неактыўнасці»'
             },
             autostart_launch_off: {
-                ru: 'Нет',
-                en: 'Off',
-                uk: 'Ні',
-                be: 'Не'
+                ru: 'Отключен',
+                en: 'Disabled',
+                uk: 'Вимкнено',
+                be: 'Адключаны'
+            },
+            autostart_launch_pause: {
+                ru: 'Пауза',
+                en: 'Paused',
+                uk: 'Пауза',
+                be: 'Паўза'
+            },
+            autostart_launch_idle: {
+                ru: 'При неактивности',
+                en: 'When inactive',
+                uk: 'Під час неактивності',
+                be: 'Пры неактыўнасці'
+            },
+            autostart_launch_now: {
+                ru: 'Немедленно',
+                en: 'Immediately',
+                uk: 'Негайно',
+                be: 'Неадкладна'
             },
             autostart_launch_after: {
                 ru: 'Через {sec} сек',
@@ -315,22 +334,16 @@
                 be: 'хв'
             },
             autostart_idle: {
-                ru: 'Запускать при простое',
-                en: 'Launch when idle',
-                uk: 'Запускати під час простою',
-                be: 'Запускаць пры прастоі'
+                ru: 'Время неактивности',
+                en: 'Inactivity time',
+                uk: 'Час неактивності',
+                be: 'Час неактыўнасці'
             },
             autostart_idle_descr: {
-                ru: 'Отсчёт начинается заново при нажатии кнопок, движении мыши или касании',
-                en: 'The countdown restarts on a key press, mouse movement or touch',
-                uk: 'Відлік починається знову після натискання кнопок, руху миші або дотику',
-                be: 'Адлік пачынаецца нанова пры націсканні кнопак, руху мышы або дотыку'
-            },
-            autostart_idle_none: {
-                ru: 'Немедленно',
-                en: 'Immediately',
-                uk: 'Негайно',
-                be: 'Неадкладна'
+                ru: 'Для автозапуска «При неактивности» и продолжения после видео. Отсчёт начинается заново при нажатии кнопок, движении мыши или касании',
+                en: 'For the "When inactive" autostart and resuming after a video. The countdown restarts on a key press, mouse movement or touch',
+                uk: 'Для автозапуску «Під час неактивності» та продовження після відео. Відлік починається знову після натискання кнопок, руху миші або дотику',
+                be: 'Для аўтазапуску «Пры неактыўнасці» і працягу пасля відэа. Адлік пачынаецца нанова пры націсканні кнопак, руху мышы або дотыку'
             },
             autostart_resume_video: {
                 ru: 'После просмотра видео',
@@ -352,7 +365,7 @@
             },
             autostart_resume_idle: {
                 ru: 'Запускать при неактивности',
-                en: 'Launch when idle',
+                en: 'Launch when inactive',
                 uk: 'Запускати під час неактивності',
                 be: 'Запускаць пры неактыўнасці'
             },
@@ -379,30 +392,6 @@
                 en: 'The channel plays in the background, the mini player appears in the header',
                 uk: 'Канал грає у фоні, мініплеєр з\'явиться в шапці',
                 be: 'Канал грае ў фоне, міні-плэер з\'явіцца ў шапцы'
-            },
-            autostart_radio_mode: {
-                ru: 'Режим при старте',
-                en: 'Start mode',
-                uk: 'Режим під час старту',
-                be: 'Рэжым пры старце'
-            },
-            autostart_radio_mode_descr: {
-                ru: 'При паузе канал запустится по нажатию на иконку {name} в шапке',
-                en: 'When paused, the channel starts when you press the {name} icon in the header',
-                uk: 'На паузі канал запуститься після натискання на іконку {name} у шапці',
-                be: 'На паўзе канал запусціцца пасля націскання на іконку {name} у шапцы'
-            },
-            autostart_radio_mode_play: {
-                ru: 'Играть',
-                en: 'Play',
-                uk: 'Грати',
-                be: 'Іграць'
-            },
-            autostart_radio_mode_pause: {
-                ru: 'Пауза (только иконка в шапке)',
-                en: 'Paused (header icon only)',
-                uk: 'Пауза (лише іконка в шапці)',
-                be: 'Паўза (толькі іконка ў шапцы)'
             },
             autostart_radio_last: {
                 ru: 'Последний прослушанный',
@@ -676,10 +665,14 @@
         // the keys are not numbers: Lampa lists select values with for-in, where number keys go first
         var launchValues = {
             off: t('autostart_launch_off'),
-            now: t('autostart_idle_none')
+            pause: t('autostart_launch_pause'),
+            idle: t('autostart_launch_idle'),
+            now: t('autostart_launch_now')
         };
-        var idles = [0, 30, 60, 180, 300, 600, 1200, 1800, 3600];
+        var idles = [30, 60, 180, 300, 600, 1200, 1800, 3600];
         var idleValues = {};
+        var storedIdle = Lampa.Storage.get('autostart_idle', '');
+        var oldIdle = parseInt(storedIdle, 10) || 0;
 
         // 1.7.0 and earlier had "Nothing" in "What to launch": keep nothing launching, "Autostart on launch" does it now
         if (Lampa.Storage.get('autostart_target', '') === 'none') {
@@ -688,13 +681,24 @@
             log('target "none" replaced by "custom", autostart turned off');
         }
 
-        // 1.8.x and earlier had an "Autostart on launch" switch and a separate "Launch delay"
+        // 1.8.x and earlier: an "Autostart on launch" switch, a "Launch delay", "Launch when idle" with "Immediately"
+        // and a "Start mode" (play or pause) of every target
         if (Lampa.Storage.get('autostart_launch', '') === '' && Lampa.Storage.get('autostart_enabled', false) === true) {
             var oldDelay = parseInt(Lampa.Storage.get('autostart_delay', '3'), 10);
-            var launchValue = oldDelay === 0 ? 'now' : delays.indexOf(oldDelay) !== -1 ? oldDelay + 's' : '3s';
+            var oldMode = Lampa.Storage.get('autostart_' + Lampa.Storage.get('autostart_target', 'custom') + '_mode', '');
+            var launchValue = oldMode === 'pause' ? 'pause'
+                : oldIdle > 0 ? 'idle'
+                    : oldDelay === 0 ? 'now'
+                        : delays.indexOf(oldDelay) !== -1 ? oldDelay + 's' : '3s';
 
             Lampa.Storage.set('autostart_launch', launchValue, true);
-            log('autostart switch and delay', oldDelay, 'replaced by', launchValue);
+            log('autostart switch, delay', oldDelay, 'idle', oldIdle, 'and mode', oldMode, 'replaced by', launchValue);
+        }
+
+        // "Immediately" has moved from the inactivity time to "Autostart on launch"
+        if (storedIdle !== '' && idles.indexOf(oldIdle) === -1) {
+            Lampa.Storage.set('autostart_idle', String(IDLE_DEFAULT), true);
+            log('inactivity time', storedIdle, 'replaced by', IDLE_DEFAULT);
         }
 
         for (var i = 0; i < delays.length; i++) {
@@ -704,9 +708,7 @@
         for (var j = 0; j < idles.length; j++) {
             var idle = idles[j];
 
-            if (!idle) idleValues[idle] = t('autostart_idle_none');
-            else if (idle < 60) idleValues[idle] = idle + ' ' + t('autostart_delay_sec');
-            else idleValues[idle] = idle / 60 + ' ' + t('autostart_delay_min');
+            idleValues[idle] = idle < 60 ? idle + ' ' + t('autostart_delay_sec') : idle / 60 + ' ' + t('autostart_delay_min');
         }
 
         Lampa.SettingsApi.addComponent({
@@ -751,7 +753,7 @@
                 name: 'autostart_idle',
                 type: 'select',
                 values: idleValues,
-                default: '0'
+                default: String(IDLE_DEFAULT)
             },
             field: {
                 name: t('autostart_idle'),
@@ -810,7 +812,7 @@
                 log('started', provider.id);
             }, function (message) {
                 notify(message || provider.name);
-            });
+            }, startMode());
         } catch (e) {
             notify(provider.name + ': ' + e.message);
         }
@@ -832,17 +834,13 @@
         });
     }
 
-    /** True when the provider starts paused (only its icon); a provider not registered yet plays. */
-    function startsPaused(provider) {
-        try {
-            return Boolean(provider && typeof provider.paused === 'function' && provider.paused());
-        } catch (e) {
-            return false;
-        }
+    /** play, or pause for the "Paused" autostart: only the icon, the target starts when it is pressed. */
+    function startMode() {
+        return Lampa.Storage.field('autostart_launch') === 'pause' ? 'pause' : 'play';
     }
 
     function launch() {
-        // off | now | <seconds>s
+        // off | pause | idle | now | <seconds>s
         var when = String(Lampa.Storage.field('autostart_launch') || 'off');
 
         if (when === 'off') return;
@@ -851,15 +849,15 @@
 
         if (!target || target === 'none') return;
 
+        // pause, idle and now: no delay
         var delay = parseInt(when, 10) || 0;
-        var idle = idleSeconds('autostart_idle');
-        var provider = findProvider(target);
 
-        // the idle countdown is only for a target that plays: it starts at once, the launch delay is not part of it
-        if (idle && !startsPaused(provider)) {
-            log('launch', target, 'after', idle, 'sec idle');
+        if (when === 'idle') {
+            var idle = idleSeconds('autostart_idle');
 
-            cancelLaunch = idleCountdown(idle, provider, function () {
+            log('launch', target, 'after', idle, 'sec of inactivity');
+
+            cancelLaunch = idleCountdown(idle, findProvider(target), function () {
                 start(target);
             });
 
@@ -1367,22 +1365,6 @@
                     }
                 });
 
-                addParam({
-                    param: {
-                        name: KEY + '_mode',
-                        type: 'select',
-                        values: {
-                            play: '#{autostart_radio_mode_play}',
-                            pause: '#{autostart_radio_mode_pause}'
-                        },
-                        default: 'play'
-                    },
-                    field: {
-                        name: t('autostart_radio_mode'),
-                        description: radioText('autostart_radio_mode_descr', cfg.name)
-                    }
-                });
-
                 Lampa.Settings.listener.follow('open', function (e) {
                     if (e.name === COMPONENT) fetchChannels(function () { }, function () { });
                 });
@@ -1396,7 +1378,7 @@
                 waitFor(cfg.player, WAIT_TIMEOUT, hookPlayer);
             },
 
-            run: function (done, fail) {
+            run: function (done, fail, mode) {
                 var selected = Lampa.Storage.field(KEY + '_channel');
                 var channelId = optionId(selected);
 
@@ -1406,12 +1388,7 @@
                     if (!channelId) return fail(error('autostart_radio_error_last'));
                 }
 
-                startChannel(channelId, Lampa.Storage.field(KEY + '_mode'), done, fail);
-            },
-
-            /** Pause mode: the autostart shows the header button at once, without an idle countdown. */
-            paused: function () {
-                return Lampa.Storage.field(KEY + '_mode') === 'pause';
+                startChannel(channelId, mode === 'pause' ? 'pause' : 'play', done, fail);
             },
 
             /** The header button is shown and not stopped: the user wants the radio to play. */
@@ -1999,10 +1976,6 @@
 
             check: check,
 
-            paused: function () {
-                return Lampa.Storage.field('autostart_custom_mode') === 'pause';
-            },
-
             /**
              * Idle countdown: the stopped icon with blinking bars. Before the autostart the icon is not
              * shown yet, so it is armed first. Errors are reported by run() when the countdown is over.
@@ -2056,22 +2029,6 @@
                     }
                 });
 
-                addParam({
-                    param: {
-                        name: 'autostart_custom_mode',
-                        type: 'select',
-                        values: {
-                            play: '#{autostart_radio_mode_play}',
-                            pause: '#{autostart_radio_mode_pause}'
-                        },
-                        default: 'play'
-                    },
-                    field: {
-                        name: t('autostart_radio_mode'),
-                        description: radioText('autostart_radio_mode_descr', t('autostart_custom_title'))
-                    }
-                });
-
                 var volumes = [2, 4, 6, 8, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100];
                 var volumeValues = {};
 
@@ -2111,9 +2068,9 @@
                 });
             },
 
-            run: function (done, fail) {
+            run: function (done, fail, mode) {
                 resolveStream(function (stream) {
-                    if (Lampa.Storage.field('autostart_custom_mode') === 'pause') CustomPlayer.arm(stream);
+                    if (mode === 'pause') CustomPlayer.arm(stream);
                     else CustomPlayer.play(stream, customFade());
 
                     done();
