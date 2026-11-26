@@ -279,34 +279,28 @@
                 be: 'Аўтазапуск пры старце'
             },
             autostart_enabled_descr: {
-                ru: 'Запускать выбранный объект после загрузки Lampa',
-                en: 'Launch the selected object after Lampa has loaded',
-                uk: 'Запускати вибраний об\'єкт після завантаження Lampa',
-                be: 'Запускаць выбраны аб\'ект пасля загрузкі Lampa'
+                ru: 'Когда запускать выбранный объект после загрузки Lampa. Если задан простой (режим «Играть»), его отсчёт начинается сразу',
+                en: 'When to launch the selected object after Lampa has loaded. With an idle time (Play mode) its countdown starts at once',
+                uk: 'Коли запускати вибраний об\'єкт після завантаження Lampa. Якщо задано простій (режим «Грати»), його відлік починається одразу',
+                be: 'Калі запускаць выбраны аб\'ект пасля загрузкі Lampa. Калі зададзены прастой (рэжым «Іграць»), яго адлік пачынаецца адразу'
+            },
+            autostart_launch_off: {
+                ru: 'Нет',
+                en: 'Off',
+                uk: 'Ні',
+                be: 'Не'
+            },
+            autostart_launch_after: {
+                ru: 'Через {sec} сек',
+                en: 'After {sec} sec',
+                uk: 'Через {sec} сек',
+                be: 'Праз {sec} сек'
             },
             autostart_target: {
                 ru: 'Что запускать',
                 en: 'What to launch',
                 uk: 'Що запускати',
                 be: 'Што запускаць'
-            },
-            autostart_delay: {
-                ru: 'Задержка запуска',
-                en: 'Launch delay',
-                uk: 'Затримка запуску',
-                be: 'Затрымка запуску'
-            },
-            autostart_delay_descr: {
-                ru: 'Действует, если простой «Немедленно» или выбран режим «Пауза»',
-                en: 'Applies when idle is "Immediately" or the "Paused" mode is selected',
-                uk: 'Діє, якщо простій «Негайно» або вибрано режим «Пауза»',
-                be: 'Дзейнічае, калі прастой «Неадкладна» або выбраны рэжым «Паўза»'
-            },
-            autostart_delay_none: {
-                ru: 'Без задержки',
-                en: 'No delay',
-                uk: 'Без затримки',
-                be: 'Без затрымкі'
             },
             autostart_delay_sec: {
                 ru: 'сек',
@@ -678,20 +672,33 @@
     /* ------------------------------------------------------------------ */
 
     function buildSettings() {
-        var delays = [0, 3, 5, 10, 15, 30];
-        var delayValues = {};
+        var delays = [3, 5, 10, 15, 30];
+        // the keys are not numbers: Lampa lists select values with for-in, where number keys go first
+        var launchValues = {
+            off: t('autostart_launch_off'),
+            now: t('autostart_idle_none')
+        };
         var idles = [0, 30, 60, 180, 300, 600, 1200, 1800, 3600];
         var idleValues = {};
 
-        // 1.7.0 and earlier had "Nothing" in "What to launch": keep nothing launching, the switch does it now
+        // 1.7.0 and earlier had "Nothing" in "What to launch": keep nothing launching, "Autostart on launch" does it now
         if (Lampa.Storage.get('autostart_target', '') === 'none') {
             Lampa.Storage.set('autostart_target', 'custom', true);
-            Lampa.Storage.set('autostart_enabled', false, true);
+            Lampa.Storage.set('autostart_launch', 'off', true);
             log('target "none" replaced by "custom", autostart turned off');
         }
 
+        // 1.8.x and earlier had an "Autostart on launch" switch and a separate "Launch delay"
+        if (Lampa.Storage.get('autostart_launch', '') === '' && Lampa.Storage.get('autostart_enabled', false) === true) {
+            var oldDelay = parseInt(Lampa.Storage.get('autostart_delay', '3'), 10);
+            var launchValue = oldDelay === 0 ? 'now' : delays.indexOf(oldDelay) !== -1 ? oldDelay + 's' : '3s';
+
+            Lampa.Storage.set('autostart_launch', launchValue, true);
+            log('autostart switch and delay', oldDelay, 'replaced by', launchValue);
+        }
+
         for (var i = 0; i < delays.length; i++) {
-            delayValues[delays[i]] = delays[i] ? delays[i] + ' ' + t('autostart_delay_sec') : t('autostart_delay_none');
+            launchValues[delays[i] + 's'] = t('autostart_launch_after').replace('{sec}', delays[i]);
         }
 
         for (var j = 0; j < idles.length; j++) {
@@ -711,9 +718,10 @@
         Lampa.SettingsApi.addParam({
             component: COMPONENT,
             param: {
-                name: 'autostart_enabled',
-                type: 'trigger',
-                default: false
+                name: 'autostart_launch',
+                type: 'select',
+                values: launchValues,
+                default: 'off'
             },
             field: {
                 name: t('autostart_enabled'),
@@ -734,20 +742,6 @@
             },
             onRender: function (item) {
                 item.attr('data-children', 'autostart_target');
-            }
-        });
-
-        Lampa.SettingsApi.addParam({
-            component: COMPONENT,
-            param: {
-                name: 'autostart_delay',
-                type: 'select',
-                values: delayValues,
-                default: '3'
-            },
-            field: {
-                name: t('autostart_delay'),
-                description: t('autostart_delay_descr')
             }
         });
 
@@ -848,13 +842,16 @@
     }
 
     function launch() {
-        if (Lampa.Storage.field('autostart_enabled') !== true) return;
+        // off | now | <seconds>s
+        var when = String(Lampa.Storage.field('autostart_launch') || 'off');
+
+        if (when === 'off') return;
 
         var target = Lampa.Storage.field('autostart_target');
 
         if (!target || target === 'none') return;
 
-        var delay = parseInt(Lampa.Storage.field('autostart_delay'), 10) || 0;
+        var delay = parseInt(when, 10) || 0;
         var idle = idleSeconds('autostart_idle');
         var provider = findProvider(target);
 
@@ -1681,30 +1678,28 @@
             '.autostart-radio__icon svg{width:1.3em;height:1.3em}' +
             '.autostart-radio__name{display:none;margin-left:0.35em;white-space:nowrap;max-width:8em;overflow:hidden;' +
             'text-overflow:ellipsis}' +
-            // stopped: the icon is dimmed, the pause badge (two bars) in the bottom right corner is not
-            '.autostart-radio.stop .autostart-radio__icon{border-color:rgba(255,255,255,0.5)}' +
-            '.autostart-radio.stop .autostart-radio__icon svg{opacity:0.5}' +
-            '.autostart-radio__badge{display:none;position:absolute;right:-0.5em;bottom:-0.5em;width:0.95em;height:0.95em;' +
-            'border-radius:50%;background-color:#000;box-shadow:0 0 0 0.1em #fff}' +
-            '.autostart-radio__badge i{position:absolute;top:0.25em;width:0.14em;height:0.45em;background-color:#fff}' +
-            '.autostart-radio__badge i:first-child{left:0.28em}' +
-            '.autostart-radio__badge i:last-child{right:0.28em}' +
-            '.autostart-radio.stop .autostart-radio__badge{display:block}' +
-            // idle countdown: the same bars blink, hidden for 0.5 sec every 2 sec
-            '.autostart-radio.stop.countdown .autostart-radio__badge i{-webkit-animation:autostart-radio-wait 2s linear infinite;' +
-            'animation:autostart-radio-wait 2s linear infinite}' +
+            // stopped: the icon is dimmed together with the pause bars in its bottom right corner; the bars stay
+            // inside the frame and clear of the radio waves
+            '.autostart-radio.stop .autostart-radio__icon{opacity:0.5}' +
+            '.autostart-radio__pause{display:none;position:absolute;right:0.06em;bottom:0.06em;width:0.34em;height:0.4em}' +
+            '.autostart-radio__pause i{position:absolute;top:0;bottom:0;width:0.12em;background-color:currentColor}' +
+            '.autostart-radio__pause i:first-child{left:0}' +
+            '.autostart-radio__pause i:last-child{right:0}' +
+            '.autostart-radio.stop .autostart-radio__pause{display:block}' +
+            // idle countdown: the same bars blink, shown for 4.5 sec and hidden for 0.5 sec
+            '.autostart-radio.stop.countdown .autostart-radio__pause i{-webkit-animation:autostart-radio-wait 5s linear infinite;' +
+            'animation:autostart-radio-wait 5s linear infinite}' +
             '.autostart-radio.loading .autostart-radio__icon{-webkit-animation:autostart-radio-blink 0.6s linear infinite alternate;' +
             'animation:autostart-radio-blink 0.6s linear infinite alternate}' +
             '.autostart-radio.play .autostart-radio__icon{-webkit-animation:autostart-radio-pulse 1.6s ease-in-out infinite;' +
             'animation:autostart-radio-pulse 1.6s ease-in-out infinite}' +
             '.autostart-radio.focus{background-color:#fff;color:#000}' +
-            '.autostart-radio.focus .autostart-radio__icon{border-color:#000}' +
-            '.autostart-radio.focus .autostart-radio__icon svg{opacity:1}' +
+            '.autostart-radio.focus .autostart-radio__icon{border-color:#000;opacity:1}' +
             '.autostart-radio.focus .autostart-radio__name{display:inline}' +
             '@-webkit-keyframes autostart-radio-blink{from{opacity:0.3}to{opacity:1}}' +
             '@keyframes autostart-radio-blink{from{opacity:0.3}to{opacity:1}}' +
-            '@-webkit-keyframes autostart-radio-wait{0%,74.9%{opacity:1}75%,100%{opacity:0}}' +
-            '@keyframes autostart-radio-wait{0%,74.9%{opacity:1}75%,100%{opacity:0}}' +
+            '@-webkit-keyframes autostart-radio-wait{0%,89.9%{opacity:1}90%,100%{opacity:0}}' +
+            '@keyframes autostart-radio-wait{0%,89.9%{opacity:1}90%,100%{opacity:0}}' +
             '@-webkit-keyframes autostart-radio-pulse{0%,100%{box-shadow:0 0 0 0 rgba(255,255,255,0.5)}' +
             '50%{box-shadow:0 0 0 0.35em rgba(255,255,255,0)}}' +
             '@keyframes autostart-radio-pulse{0%,100%{box-shadow:0 0 0 0 rgba(255,255,255,0.5)}' +
@@ -1826,7 +1821,7 @@
 
             button = $('<div class="selector autostart-radio stop hide">' +
                 '<div class="autostart-radio__icon">' + ICON_SVG +
-                '<div class="autostart-radio__badge"><i></i><i></i></div>' +
+                '<div class="autostart-radio__pause"><i></i><i></i></div>' +
                 '</div>' +
                 '<div class="autostart-radio__name"></div>' +
                 '</div>');
