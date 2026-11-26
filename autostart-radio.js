@@ -26,7 +26,7 @@
 (function () {
     'use strict';
 
-    var VERSION = '1.7.3';
+    var VERSION = '1.8.0';
     var COMPONENT = 'autostart_radio';
     var AUTHOR = '@etix';
     var FILE_PATTERN = /\/autostart-radio\.js(\?|#|$)/i;
@@ -47,6 +47,9 @@
     } catch (e) { }
     var POLL_INTERVAL = 500;
     var WAIT_TIMEOUT = 30000;
+
+    // user activity that restarts the idle countdown
+    var IDLE_EVENTS = ['keydown', 'mousedown', 'mousemove', 'touchstart', 'wheel'];
 
     var ICON = '<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">' +
         '<path d="M12 2.5v8" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>' +
@@ -100,6 +103,67 @@
         }
 
         tick();
+    }
+
+    function playerOpened() {
+        try {
+            return Lampa.Player.opened() === true;
+        } catch (e) {
+            return false;
+        }
+    }
+
+    /** Idle time from a settings select, in seconds. */
+    function idleSeconds(name) {
+        return parseInt(Lampa.Storage.field(name), 10) || 0;
+    }
+
+    /**
+     * Call `done()` once there was no user activity for `seconds`. The handler only stores the
+     * time, a single timer checks it and waits for the rest. An open video player or a hidden
+     * Lampa (external player) is activity too. Returns a function that cancels the wait.
+     */
+    function waitIdle(seconds, done) {
+        var ms = seconds * 1000;
+        var last = Date.now();
+        var timer = null;
+        var i;
+
+        function touch() {
+            last = Date.now();
+        }
+
+        function off() {
+            clearTimeout(timer);
+
+            for (var k = 0; k < IDLE_EVENTS.length; k++) window.removeEventListener(IDLE_EVENTS[k], touch, true);
+        }
+
+        function check() {
+            if (playerOpened() || document.hidden) last = Date.now();
+
+            var left = ms - (Date.now() - last);
+
+            if (left > 0) {
+                timer = setTimeout(check, left);
+                return;
+            }
+
+            off();
+            done();
+        }
+
+        if (!ms) {
+            done();
+            return function () { };
+        }
+
+        // capture phase: Lampa cannot stop the event before us; `true` instead of {passive} for old TV browsers
+        for (i = 0; i < IDLE_EVENTS.length; i++) window.addEventListener(IDLE_EVENTS[i], touch, true);
+
+        timer = setTimeout(check, ms);
+
+        return off;
     }
 
     function storageArray(name) {
@@ -193,6 +257,36 @@
                 en: 'sec',
                 uk: 'сек',
                 be: 'сек'
+            },
+            autostart_delay_min: {
+                ru: 'мин',
+                en: 'min',
+                uk: 'хв',
+                be: 'хв'
+            },
+            autostart_idle: {
+                ru: 'Запускать при простое',
+                en: 'Launch when idle',
+                uk: 'Запускати під час простою',
+                be: 'Запускаць пры прастоі'
+            },
+            autostart_resume_idle: {
+                ru: 'Продолжать при простое',
+                en: 'Resume when idle',
+                uk: 'Продовжувати під час простою',
+                be: 'Працягваць пры прастоі'
+            },
+            autostart_idle_descr: {
+                ru: 'Отсчёт начинается заново при нажатии кнопок, движении мыши или касании',
+                en: 'The countdown restarts on a key press, mouse movement or touch',
+                uk: 'Відлік починається знову після натискання кнопок, руху миші або дотику',
+                be: 'Адлік пачынаецца нанова пры націсканні кнопак, руху мышы або дотыку'
+            },
+            autostart_idle_none: {
+                ru: 'Немедленно',
+                en: 'Immediately',
+                uk: 'Негайно',
+                be: 'Неадкладна'
             },
             autostart_resume_video: {
                 ru: 'После просмотра видео',
@@ -431,6 +525,21 @@
         return null;
     }
 
+    /** The provider that plays now. */
+    function activeProvider() {
+        for (var i = 0; i < providers.length; i++) {
+            var provider = providers[i];
+
+            if (typeof provider.active !== 'function') continue;
+
+            try {
+                if (provider.active()) return provider;
+            } catch (e) { }
+        }
+
+        return null;
+    }
+
     /**
      * Add a provider parameter to the settings section. It is shown only
      * while this provider is selected in "What to launch".
@@ -515,6 +624,8 @@
     function buildSettings() {
         var delays = [0, 3, 5, 10, 15, 30];
         var delayValues = {};
+        var idles = [0, 30, 60, 180, 300, 600, 1200, 1800, 3600];
+        var idleValues = {};
 
         // 1.7.0 and earlier had "Nothing" in "What to launch": keep nothing launching, the switch does it now
         if (Lampa.Storage.get('autostart_target', '') === 'none') {
@@ -525,6 +636,14 @@
 
         for (var i = 0; i < delays.length; i++) {
             delayValues[delays[i]] = delays[i] ? delays[i] + ' ' + t('autostart_delay_sec') : t('autostart_delay_none');
+        }
+
+        for (var j = 0; j < idles.length; j++) {
+            var idle = idles[j];
+
+            if (!idle) idleValues[idle] = t('autostart_idle_none');
+            else if (idle < 60) idleValues[idle] = idle + ' ' + t('autostart_delay_sec');
+            else idleValues[idle] = idle / 60 + ' ' + t('autostart_delay_min');
         }
 
         Lampa.SettingsApi.addComponent({
@@ -578,6 +697,20 @@
         Lampa.SettingsApi.addParam({
             component: COMPONENT,
             param: {
+                name: 'autostart_idle',
+                type: 'select',
+                values: idleValues,
+                default: '0'
+            },
+            field: {
+                name: t('autostart_idle'),
+                description: t('autostart_idle_descr')
+            }
+        });
+
+        Lampa.SettingsApi.addParam({
+            component: COMPONENT,
+            param: {
                 name: 'autostart_resume_video',
                 type: 'select',
                 values: {
@@ -589,6 +722,28 @@
             field: {
                 name: t('autostart_resume_video'),
                 description: t('autostart_resume_video_descr')
+            },
+            onRender: function (item) {
+                item.attr('data-children', 'autostart_resume_video');
+            }
+        });
+
+        // shown only with "Resume playback"
+        Lampa.SettingsApi.addParam({
+            component: COMPONENT,
+            param: {
+                name: 'autostart_resume_idle',
+                type: 'select',
+                values: idleValues,
+                default: '0'
+            },
+            field: {
+                name: t('autostart_resume_idle'),
+                description: t('autostart_idle_descr')
+            },
+            onRender: function (item) {
+                item.attr('data-parent', 'autostart_resume_video');
+                item.attr('data-visible-value', 'resume');
             }
         });
 
@@ -638,15 +793,23 @@
         if (!target || target === 'none') return;
 
         var delay = parseInt(Lampa.Storage.field('autostart_delay'), 10) || 0;
+        var idle = idleSeconds('autostart_idle');
 
-        log('launch', target, 'in', delay, 'sec');
+        log('launch', target, 'in', delay, 'sec, idle', idle, 'sec');
 
         setTimeout(function () {
-            // the provider can be registered later by another (slower) plugin
-            waitFor(function () {
-                return findProvider(target);
-            }, WAIT_TIMEOUT, runProvider, function () {
-                notify(t('autostart_error_provider') + ' (' + target + ')');
+            waitIdle(idle, function () {
+                // the user has started a radio by hand meanwhile
+                var playing = activeProvider();
+
+                if (playing) return log('launch skipped,', playing.id, 'is playing');
+
+                // the provider can be registered later by another (slower) plugin
+                waitFor(function () {
+                    return findProvider(target);
+                }, WAIT_TIMEOUT, runProvider, function () {
+                    notify(t('autostart_error_provider') + ' (' + target + ')');
+                });
             });
         }, delay * 1000);
     }
@@ -1843,37 +2006,19 @@
 
         var suspended = null;  // provider stopped for a video
         var timer = null;
-
-        /** The provider that plays now. */
-        function activeProvider() {
-            for (var i = 0; i < providers.length; i++) {
-                var provider = providers[i];
-
-                if (typeof provider.active !== 'function') continue;
-
-                try {
-                    if (provider.active()) return provider;
-                } catch (e) { }
-            }
-
-            return null;
-        }
-
-        function playerOpened() {
-            try {
-                return Lampa.Player.opened() === true;
-            } catch (e) {
-                return false;
-            }
-        }
+        var cancelIdle = function () { };  // cancels the idle wait before a resume
 
         function onStart() {
             clearTimeout(timer);
-
-            // the next episode: the radio is already stopped
-            if (suspended) return;
+            cancelIdle();
 
             var target = activeProvider();
+
+            // the next episode: the radio is already stopped
+            if (suspended && !target) return;
+
+            // a radio started by hand while waiting to resume replaces the suspended one
+            suspended = null;
 
             if (!target) return;
 
@@ -1895,17 +2040,31 @@
 
             var target = suspended;
 
-            suspended = null;
+            cancelIdle();
 
-            log('resume', target.id);
+            // `suspended` stays set while waiting: the next video or player close restarts the wait
+            cancelIdle = waitIdle(idleSeconds('autostart_resume_idle'), function () {
+                cancelIdle = function () { };
 
-            try {
-                target.resume(function () { }, function (message) {
-                    notify(message || target.name);
-                });
-            } catch (e) {
-                notify(target.name + ': ' + e.message);
-            }
+                if (suspended !== target) return;
+
+                suspended = null;
+
+                // the user has started a radio by hand meanwhile
+                var playing = activeProvider();
+
+                if (playing) return log('resume skipped,', playing.id, 'is playing');
+
+                log('resume', target.id);
+
+                try {
+                    target.resume(function () { }, function (message) {
+                        notify(message || target.name);
+                    });
+                } catch (e) {
+                    notify(target.name + ': ' + e.message);
+                }
+            });
         }
 
         /** The player is closed or Lampa is back from an external player. */
@@ -1913,6 +2072,7 @@
             if (!suspended) return;
 
             clearTimeout(timer);
+            cancelIdle();
             timer = setTimeout(resume, DELAY);
         }
 
