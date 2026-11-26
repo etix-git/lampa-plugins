@@ -15,7 +15,11 @@
  *           run: function(done, fail){ ...; done() },
  *           // optional, to come back after a video: see Resume
  *           active: function(){ return true }, suspend: function(){}, stop: function(){},
- *           resume: function(done, fail){ done() }
+ *           resume: function(done, fail){ done() },
+ *           // optional: true when it starts paused (no idle countdown then)
+ *           paused: function(){ return false },
+ *           // optional: show or hide the idle countdown on its own icon
+ *           countdown: function(on){}
  *       })
  *   }
  *   if(window.Lampa && Lampa.AutostartRadio) addAutostartRadio()
@@ -26,7 +30,7 @@
 (function () {
     'use strict';
 
-    var VERSION = '1.8.0';
+    var VERSION = '1.9.0';
     var COMPONENT = 'autostart_radio';
     var AUTHOR = '@etix';
     var FILE_PATTERN = /\/autostart-radio\.js(\?|#|$)/i;
@@ -61,6 +65,8 @@
     var appReady = false;
     var settingsBuilt = false;
     var lastSettingsOpen = '';
+    // cancels the autostart (its delay or idle countdown), returns true if it was still pending
+    var cancelLaunch = function () { };
 
     /* ------------------------------------------------------------------ */
     /* Helpers                                                             */
@@ -166,6 +172,50 @@
         return off;
     }
 
+    /**
+     * `waitIdle` shown on the icon of `provider` (its optional countdown(on)). Returns a function
+     * that cancels the wait; it is safe to call more than once and after `done`.
+     */
+    function idleCountdown(seconds, provider, done) {
+        var finished = false;
+        var stopWait;
+
+        function badge(on) {
+            if (!provider || typeof provider.countdown !== 'function') return;
+
+            try {
+                provider.countdown(on);
+            } catch (e) {
+                log('countdown error', provider.id, e);
+            }
+        }
+
+        function finish() {
+            if (finished) return false;
+
+            finished = true;
+            stopWait();
+            badge(false);
+
+            return true;
+        }
+
+        if (!seconds) {
+            done();
+            return function () { };
+        }
+
+        stopWait = function () { };
+        badge(true);
+        stopWait = waitIdle(seconds, function () {
+            if (finish()) done();
+        });
+
+        return function () {
+            return finish();
+        };
+    }
+
     function storageArray(name) {
         var value = Lampa.Storage.get(name, '[]');
 
@@ -245,6 +295,12 @@
                 en: 'Launch delay',
                 uk: 'Затримка запуску',
                 be: 'Затрымка запуску'
+            },
+            autostart_delay_descr: {
+                ru: 'Действует, если простой «Немедленно» или выбран режим «Пауза»',
+                en: 'Applies when idle is "Immediately" or the "Paused" mode is selected',
+                uk: 'Діє, якщо простій «Негайно» або вибрано режим «Пауза»',
+                be: 'Дзейнічае, калі прастой «Неадкладна» або выбраны рэжым «Паўза»'
             },
             autostart_delay_none: {
                 ru: 'Без задержки',
@@ -690,7 +746,8 @@
                 default: '3'
             },
             field: {
-                name: t('autostart_delay')
+                name: t('autostart_delay'),
+                description: t('autostart_delay_descr')
             }
         });
 
@@ -765,6 +822,31 @@
         }
     }
 
+    function start(target) {
+        cancelLaunch = function () { };
+
+        // the user has started a radio by hand meanwhile
+        var playing = activeProvider();
+
+        if (playing) return log('launch skipped,', playing.id, 'is playing');
+
+        // the provider can be registered later by another (slower) plugin
+        waitFor(function () {
+            return findProvider(target);
+        }, WAIT_TIMEOUT, runProvider, function () {
+            notify(t('autostart_error_provider') + ' (' + target + ')');
+        });
+    }
+
+    /** True when the provider starts paused (only its icon); a provider not registered yet plays. */
+    function startsPaused(provider) {
+        try {
+            return Boolean(provider && typeof provider.paused === 'function' && provider.paused());
+        } catch (e) {
+            return false;
+        }
+    }
+
     function launch() {
         if (Lampa.Storage.field('autostart_enabled') !== true) return;
 
@@ -774,24 +856,44 @@
 
         var delay = parseInt(Lampa.Storage.field('autostart_delay'), 10) || 0;
         var idle = idleSeconds('autostart_idle');
+        var provider = findProvider(target);
 
-        log('launch', target, 'in', delay, 'sec, idle', idle, 'sec');
+        // the idle countdown is only for a target that plays: it starts at once, the launch delay is not part of it
+        if (idle && !startsPaused(provider)) {
+            log('launch', target, 'after', idle, 'sec idle');
 
-        setTimeout(function () {
-            waitIdle(idle, function () {
-                // the user has started a radio by hand meanwhile
-                var playing = activeProvider();
-
-                if (playing) return log('launch skipped,', playing.id, 'is playing');
-
-                // the provider can be registered later by another (slower) plugin
-                waitFor(function () {
-                    return findProvider(target);
-                }, WAIT_TIMEOUT, runProvider, function () {
-                    notify(t('autostart_error_provider') + ' (' + target + ')');
-                });
+            cancelLaunch = idleCountdown(idle, provider, function () {
+                start(target);
             });
+
+            return;
+        }
+
+        log('launch', target, 'in', delay, 'sec');
+
+        var timer = setTimeout(function () {
+            start(target);
         }, delay * 1000);
+
+        cancelLaunch = function () {
+            clearTimeout(timer);
+            cancelLaunch = function () { };
+
+            return true;
+        };
+    }
+
+    /**
+     * The user has started or stopped a radio by hand: the autostart and a resume after a video
+     * must not start it again.
+     */
+    function manualRadio(reason) {
+        var launchCancelled = cancelLaunch();
+        var resumeCancelled = Resume.forget();
+
+        cancelLaunch = function () { };
+
+        if (launchCancelled || resumeCancelled) log('countdown cancelled:', reason);
     }
 
     function onReady() {
@@ -1050,6 +1152,10 @@
                         // a channel started in any way replaces the one waiting in pause mode
                         if (method === 'play') armed = null;
 
+                        // started by hand: no countdown may start a radio after it (our own starts come
+                        // here when their countdowns are already over)
+                        manualRadio(cfg.name + ' ' + method);
+
                         var result = original.apply(this, arguments);
 
                         remember(p.currentStation || (arg && typeof arg === 'object' ? arg : null));
@@ -1304,6 +1410,11 @@
                 }
 
                 startChannel(channelId, Lampa.Storage.field(KEY + '_mode'), done, fail);
+            },
+
+            /** Pause mode: the autostart shows the header button at once, without an idle countdown. */
+            paused: function () {
+                return Lampa.Storage.field(KEY + '_mode') === 'pause';
             },
 
             /** The header button is shown and not stopped: the user wants the radio to play. */
@@ -1566,20 +1677,34 @@
             '.autostart-radio__icon{width:2em;height:2em;display:-webkit-box;display:-webkit-flex;display:flex;' +
             '-webkit-box-align:center;-webkit-align-items:center;align-items:center;-webkit-box-pack:center;' +
             '-webkit-justify-content:center;justify-content:center;border:0.15em solid #fff;border-radius:0.3em;' +
-            '-webkit-flex-shrink:0;flex-shrink:0;box-sizing:border-box}' +
+            '-webkit-flex-shrink:0;flex-shrink:0;box-sizing:border-box;position:relative}' +
             '.autostart-radio__icon svg{width:1.3em;height:1.3em}' +
             '.autostart-radio__name{display:none;margin-left:0.35em;white-space:nowrap;max-width:8em;overflow:hidden;' +
             'text-overflow:ellipsis}' +
-            '.autostart-radio.stop .autostart-radio__icon{opacity:0.5}' +
+            // stopped: the icon is dimmed, the pause badge (two bars) in the bottom right corner is not
+            '.autostart-radio.stop .autostart-radio__icon{border-color:rgba(255,255,255,0.5)}' +
+            '.autostart-radio.stop .autostart-radio__icon svg{opacity:0.5}' +
+            '.autostart-radio__badge{display:none;position:absolute;right:-0.5em;bottom:-0.5em;width:0.95em;height:0.95em;' +
+            'border-radius:50%;background-color:#000;box-shadow:0 0 0 0.1em #fff}' +
+            '.autostart-radio__badge i{position:absolute;top:0.25em;width:0.14em;height:0.45em;background-color:#fff}' +
+            '.autostart-radio__badge i:first-child{left:0.28em}' +
+            '.autostart-radio__badge i:last-child{right:0.28em}' +
+            '.autostart-radio.stop .autostart-radio__badge{display:block}' +
+            // idle countdown: the same bars blink, hidden for 0.5 sec every 2 sec
+            '.autostart-radio.stop.countdown .autostart-radio__badge i{-webkit-animation:autostart-radio-wait 2s linear infinite;' +
+            'animation:autostart-radio-wait 2s linear infinite}' +
             '.autostart-radio.loading .autostart-radio__icon{-webkit-animation:autostart-radio-blink 0.6s linear infinite alternate;' +
             'animation:autostart-radio-blink 0.6s linear infinite alternate}' +
             '.autostart-radio.play .autostart-radio__icon{-webkit-animation:autostart-radio-pulse 1.6s ease-in-out infinite;' +
             'animation:autostart-radio-pulse 1.6s ease-in-out infinite}' +
             '.autostart-radio.focus{background-color:#fff;color:#000}' +
-            '.autostart-radio.focus .autostart-radio__icon{border-color:#000;opacity:1}' +
+            '.autostart-radio.focus .autostart-radio__icon{border-color:#000}' +
+            '.autostart-radio.focus .autostart-radio__icon svg{opacity:1}' +
             '.autostart-radio.focus .autostart-radio__name{display:inline}' +
             '@-webkit-keyframes autostart-radio-blink{from{opacity:0.3}to{opacity:1}}' +
             '@keyframes autostart-radio-blink{from{opacity:0.3}to{opacity:1}}' +
+            '@-webkit-keyframes autostart-radio-wait{0%,74.9%{opacity:1}75%,100%{opacity:0}}' +
+            '@keyframes autostart-radio-wait{0%,74.9%{opacity:1}75%,100%{opacity:0}}' +
             '@-webkit-keyframes autostart-radio-pulse{0%,100%{box-shadow:0 0 0 0 rgba(255,255,255,0.5)}' +
             '50%{box-shadow:0 0 0 0.35em rgba(255,255,255,0)}}' +
             '@keyframes autostart-radio-pulse{0%,100%{box-shadow:0 0 0 0 rgba(255,255,255,0.5)}' +
@@ -1700,11 +1825,16 @@
             }
 
             button = $('<div class="selector autostart-radio stop hide">' +
-                '<div class="autostart-radio__icon">' + ICON_SVG + '</div>' +
+                '<div class="autostart-radio__icon">' + ICON_SVG +
+                '<div class="autostart-radio__badge"><i></i><i></i></div>' +
+                '</div>' +
                 '<div class="autostart-radio__name"></div>' +
                 '</div>');
 
             button.on('hover:enter', function () {
+                // a press (start or stop) cancels the idle countdown for good
+                manualRadio('icon pressed');
+
                 if (audio && audio.getAttribute('src')) reset();
                 else if (url) play(url);
             });
@@ -1794,9 +1924,15 @@
             setState('stop');
         }
 
+        /** Idle countdown: the pause bars of the stopped icon blink. */
+        function countdown(on) {
+            if (button) button.toggleClass('countdown', Boolean(on));
+        }
+
         api = {
             play: play,
             arm: arm,
+            countdown: countdown,
             stop: reset,
             destroy: reset,
             /** Playing or loading. */
@@ -1831,14 +1967,69 @@
         return (parseInt(Lampa.Storage.field('autostart_custom_fade'), 10) || 0) * 1000;
     }
 
+    /** Stream url of the settings: the first url of a .pls/.m3u playlist, any other url as is. */
+    function resolveStream(done, fail) {
+        var url = customUrl();
+
+        // HLS (.m3u8) and direct streams go to the audio element as is
+        if (!/\.(pls|m3u)(\?|#|$)/i.test(url)) return done(url);
+
+        var network = new Lampa.Reguest();
+
+        network.timeout(10000);
+
+        network['native'](url, function (text) {
+            var urls = parsePlaylist(text);
+
+            if (urls.length) done(urls[0]);
+            else fail(radioText('autostart_custom_error_play', '', url));
+        }, function () {
+            fail(radioText('autostart_custom_error_play', '', url));
+        }, false, {
+            dataType: 'text'
+        });
+    }
+
     /** Built in startPlugin, after the translations are added. */
     function CustomStream() {
+        var counting = false;  // the idle countdown is shown on our icon
+
+        function check() {
+            return /^https?:\/\/\S+$/i.test(customUrl()) ? null : t('autostart_custom_error_url');
+        }
+
         return {
             id: 'custom',
             name: t('autostart_custom_title'),
 
-            check: function () {
-                return /^https?:\/\/\S+$/i.test(customUrl()) ? null : t('autostart_custom_error_url');
+            check: check,
+
+            paused: function () {
+                return Lampa.Storage.field('autostart_custom_mode') === 'pause';
+            },
+
+            /**
+             * Idle countdown: the stopped icon with blinking bars. Before the autostart the icon is not
+             * shown yet, so it is armed first. Errors are reported by run() when the countdown is over.
+             */
+            countdown: function (on) {
+                counting = Boolean(on);
+
+                if (!counting) return CustomPlayer.countdown(false);
+
+                // after a video the icon is already there
+                if (CustomPlayer.url()) return CustomPlayer.countdown(true);
+
+                if (check()) return;
+
+                resolveStream(function (stream) {
+                    if (!counting || CustomPlayer.active()) return;
+
+                    CustomPlayer.arm(stream);
+                    CustomPlayer.countdown(true);
+                }, function (message) {
+                    log('countdown:', message);
+                });
             },
 
             settings: function (addParam) {
@@ -1926,32 +2117,12 @@
             },
 
             run: function (done, fail) {
-                var url = customUrl();
-
-                function start(stream) {
+                resolveStream(function (stream) {
                     if (Lampa.Storage.field('autostart_custom_mode') === 'pause') CustomPlayer.arm(stream);
                     else CustomPlayer.play(stream, customFade());
 
                     done();
-                }
-
-                // HLS (.m3u8) and direct streams go to the audio element as is
-                if (!/\.(pls|m3u)(\?|#|$)/i.test(url)) return start(url);
-
-                var network = new Lampa.Reguest();
-
-                network.timeout(10000);
-
-                network['native'](url, function (text) {
-                    var urls = parsePlaylist(text);
-
-                    if (urls.length) start(urls[0]);
-                    else fail(radioText('autostart_custom_error_play', '', url));
-                }, function () {
-                    fail(radioText('autostart_custom_error_play', '', url));
-                }, false, {
-                    dataType: 'text'
-                });
+                }, fail);
             },
 
             active: function () {
@@ -2030,10 +2201,10 @@
             cancelIdle();
 
             // `suspended` stays set while waiting: the next video or player close restarts the wait
-            // "idle" waits for the same inactivity time as the autostart
+            // "idle" waits for the same inactivity time as the autostart, shown on the icon
             var idle = resumeMode() === 'idle' ? idleSeconds('autostart_idle') : 0;
 
-            cancelIdle = waitIdle(idle, function () {
+            cancelIdle = idleCountdown(idle, target, function () {
                 cancelIdle = function () { };
 
                 if (suspended !== target) return;
@@ -2067,6 +2238,21 @@
         }
 
         return {
+            /**
+             * The user has started or stopped a radio by hand: drop the suspended one and its wait,
+             * otherwise it would start after this or the next video. Returns true if one was pending.
+             */
+            forget: function () {
+                var pending = Boolean(suspended);
+
+                clearTimeout(timer);
+                cancelIdle();
+                cancelIdle = function () { };
+                suspended = null;
+
+                return pending;
+            },
+
             init: function () {
                 try {
                     Lampa.Player.listener.follow('start', onStart);

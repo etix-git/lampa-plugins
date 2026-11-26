@@ -19,7 +19,9 @@
 
 ## Кнопка «С+»
 
-- **Отключить** — субтитры не показываются (и у Lampa, и у ТВ).
+- **Отключить** — субтитры не показываются (и у Lampa, и у ТВ). На webOS под этим пунктом виден статус
+  прокси для текущего видео: «видео идёт через прокси», «прокси работает, но это видео идёт напрямую»
+  (не торрент или видео открыто до старта прокси) или «прокси не найден».
 - **Дорожки** — у каждой подписано, откуда берётся текст: «из файла → Plus», «внешний файл → Plus»,
   «дорожка видео → Plus», «Lampa → Plus» или «рисует ТВ».
 
@@ -74,6 +76,10 @@
 Нужен LG webOS с root (Homebrew Channel). Прокси написан на Node.js, который уже встроен в webOS, и
 ничего доустанавливать не нужно. Слушает только `127.0.0.1:8095`.
 
+Есть вторая версия прокси, на Go: [`subtitles-plus-proxy-go`](../subtitles-plus-proxy-go/README.md). Это одна
+программа без зависимостей с тем же API, нагрузка на процессор примерно втрое меньше. Она ставится вместо
+Node.js-версии командой `make deploy TV=<ip>`, вернуться можно установкой Node.js-версии.
+
 ### Установка
 
 С компьютера, из корня репозитория (`<ip>` — адрес ТВ):
@@ -82,14 +88,15 @@
 tar -cf - subtitles-plus-proxy | ssh root@<ip> 'tar -C /tmp -xf - && sh /tmp/subtitles-plus-proxy/install.sh'
 ```
 
-`install.sh` копирует файлы в `/home/root/subsplus/`, ставит автозапуск
-`/var/lib/webosbrew/init.d/70-subsplus`, запускает прокси и проверяет `/health`. Прокси перезапускается сам,
-если упадёт; лог в `/tmp/subsplus.log`.
+`install.sh` копирует файлы в `/media/developer/apps/var/lib/subsplus/` и ставит автозапуск: симлинк
+`/var/lib/webosbrew/init.d/70-subsplus` → `/media/developer/apps/var/lib/subsplus/subsplus.sh`. Затем запускает прокси, проверяет
+`/health` и печатает версию, папку, адрес, PID и автозапуск. Прокси перезапускается сам, если упадёт; лог в
+`/tmp/subsplus.log`.
 
 После установки откройте в шестерёнке плеера «Субтитры: Plus»: у пункта «Прокси для торрентов» должно быть
 «работает». Прокси подхватывается для следующего запущенного торрента.
 
-Удаление: `ssh root@<ip> sh /home/root/subsplus/install.sh --uninstall`.
+Удаление: `ssh root@<ip> sh /media/developer/apps/var/lib/subsplus/install.sh --uninstall`.
 
 ### Проверка нагрузки
 
@@ -97,7 +104,7 @@ tar -cf - subtitles-plus-proxy | ssh root@<ip> 'tar -C /tmp -xf - && sh /tmp/sub
 (4K-ремукс). Возьмите торрент, который уже хорошо скачан в TorrServer, и адрес потока, который играет Lampa:
 
 ```sh
-ssh root@<ip> "sh /home/root/subsplus/bench.sh 'http://<torrserver>:8090/stream/Movie.mkv?link=<hash>&index=1&play' 400"
+ssh root@<ip> "sh /media/developer/apps/var/lib/subsplus/bench.sh 'http://<torrserver>:8090/stream/Movie.mkv?link=<hash>&index=1&play' 400"
 ```
 
 Скрипт читает 400 МБ напрямую, через прокси и снова напрямую, и показывает скорость, загрузку процессора
@@ -128,6 +135,17 @@ python3 subtitles-plus-proxy/test/gen_mkv.py /tmp/c.mkv --unknown-clusters --sec
 docker run --rm -u $(id -u):$(id -g) -v $PWD:$PWD -v /tmp:/tmp -w $PWD node:12.21.0 \
   sh -c 'node subtitles-plus-proxy/test/test_parser.js subtitles-plus-proxy/server.js /tmp/a.mkv /tmp/c.mkv &&
          node subtitles-plus-proxy/test/e2e.js subtitles-plus-proxy/server.js /tmp/a.mkv'
+```
+
+`subtitles-plus-proxy/test/plugin_smoke.js` проверяет сам плагин в jsdom с настоящим прокси и заглушкой
+TorrServer: подмену адреса, кнопку «С+», дорожки из файла и от ТВ, задержку, защиту от повторного включения
+субтитров ТВ, память и отказ прокси. Нужны `jsdom` и `jquery` (путь к их `node_modules` — в `SMOKE_MODULES`),
+прокси передаётся командой: Go-сборка или `server.js`.
+
+```sh
+docker run --rm -u $(id -u):$(id -g) -e HOME=/tmp -e SMOKE_MODULES=/tmp/smoke/node_modules \
+  -v $PWD:$PWD -v /tmp:/tmp -w $PWD node:24.20.0 \
+  node subtitles-plus-proxy/test/plugin_smoke.js subtitles-plus.js /tmp/a.mkv subtitles-plus-proxy-go/dist/subsplus-proxy-linux-amd64
 ```
 
 ## Ограничения
