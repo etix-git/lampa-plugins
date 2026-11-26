@@ -270,17 +270,11 @@
                 uk: 'Запускати під час простою',
                 be: 'Запускаць пры прастоі'
             },
-            autostart_resume_idle: {
-                ru: 'Продолжать при простое',
-                en: 'Resume when idle',
-                uk: 'Продовжувати під час простою',
-                be: 'Працягваць пры прастоі'
-            },
             autostart_idle_descr: {
-                ru: 'Отсчёт начинается заново при нажатии кнопок, движении мыши или касании',
-                en: 'The countdown restarts on a key press, mouse movement or touch',
-                uk: 'Відлік починається знову після натискання кнопок, руху миші або дотику',
-                be: 'Адлік пачынаецца нанова пры націсканні кнопак, руху мышы або дотыку'
+                ru: 'Отсчёт начинается заново при нажатии кнопок, движении мыши или касании. Действует и после просмотра видео',
+                en: 'The countdown restarts on a key press, mouse movement or touch. Also used after watching a video',
+                uk: 'Відлік починається знову після натискання кнопок, руху миші або дотику. Діє і після перегляду відео',
+                be: 'Адлік пачынаецца нанова пры націсканні кнопак, руху мышы або дотыку. Дзейнічае і пасля прагляду відэа'
             },
             autostart_idle_none: {
                 ru: 'Немедленно',
@@ -301,10 +295,16 @@
                 be: 'На час відэа радыё спыняецца, у тым ліку ў знешнім плэеры'
             },
             autostart_resume_play: {
-                ru: 'Продолжить воспроизведение',
-                en: 'Resume playback',
-                uk: 'Продовжити відтворення',
-                be: 'Працягнуць прайграванне'
+                ru: 'Запускать немедленно',
+                en: 'Launch immediately',
+                uk: 'Запускати негайно',
+                be: 'Запускаць неадкладна'
+            },
+            autostart_resume_idle: {
+                ru: 'Запускать при неактивности',
+                en: 'Launch when idle',
+                uk: 'Запускати під час неактивності',
+                be: 'Запускаць пры неактыўнасці'
             },
             autostart_resume_none: {
                 ru: 'Ничего не делать',
@@ -715,35 +715,15 @@
                 type: 'select',
                 values: {
                     none: '#{autostart_resume_none}',
-                    resume: '#{autostart_resume_play}'
+                    // "resume" is kept from 1.7.x, where it was "Resume playback"
+                    resume: '#{autostart_resume_play}',
+                    idle: '#{autostart_resume_idle}'
                 },
                 default: 'none'
             },
             field: {
                 name: t('autostart_resume_video'),
                 description: t('autostart_resume_video_descr')
-            },
-            onRender: function (item) {
-                item.attr('data-children', 'autostart_resume_video');
-            }
-        });
-
-        // shown only with "Resume playback"
-        Lampa.SettingsApi.addParam({
-            component: COMPONENT,
-            param: {
-                name: 'autostart_resume_idle',
-                type: 'select',
-                values: idleValues,
-                default: '0'
-            },
-            field: {
-                name: t('autostart_resume_idle'),
-                description: t('autostart_idle_descr')
-            },
-            onRender: function (item) {
-                item.attr('data-parent', 'autostart_resume_video');
-                item.attr('data-visible-value', 'resume');
             }
         });
 
@@ -2008,6 +1988,13 @@
         var timer = null;
         var cancelIdle = function () { };  // cancels the idle wait before a resume
 
+        /** none | resume (at once) | idle (after the inactivity time). */
+        function resumeMode() {
+            var mode = Lampa.Storage.field('autostart_resume_video');
+
+            return mode === 'resume' || mode === 'idle' ? mode : 'none';
+        }
+
         function onStart() {
             clearTimeout(timer);
             cancelIdle();
@@ -2022,7 +2009,7 @@
 
             if (!target) return;
 
-            if (Lampa.Storage.field('autostart_resume_video') === 'resume' &&
+            if (resumeMode() !== 'none' &&
                 typeof target.suspend === 'function' && typeof target.resume === 'function') {
                 suspended = target;
                 target.suspend();
@@ -2043,7 +2030,10 @@
             cancelIdle();
 
             // `suspended` stays set while waiting: the next video or player close restarts the wait
-            cancelIdle = waitIdle(idleSeconds('autostart_resume_idle'), function () {
+            // "idle" waits for the same inactivity time as the autostart
+            var idle = resumeMode() === 'idle' ? idleSeconds('autostart_idle') : 0;
+
+            cancelIdle = waitIdle(idle, function () {
                 cancelIdle = function () { };
 
                 if (suspended !== target) return;
